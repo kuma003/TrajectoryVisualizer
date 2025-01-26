@@ -3,7 +3,7 @@
 """
 
 import numpy as np
-from typing import Union
+from typing import Union, overload
 
 Number = Union[int, float, list, np.ndarray]
 
@@ -60,11 +60,9 @@ def latlon2tile(lat: Number, lon: Number, z: Number) -> tuple[Number, Number]:
     Mathematics Reference: https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames#Mathematics
     """
     n = 2.0**z
-    x = np.floor((lon + 180.0) / 360.0 * n)
+    x = (lon + 180.0) / 360.0 * n
     lat_rad = np.radians(lat)
-    y = np.floor(
-        (1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / np.pi) / 2.0 * n
-    )
+    y = (1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / np.pi) / 2.0 * n
     return x, y
 
 
@@ -124,3 +122,106 @@ def calc_distance(lat1: Number, lon1: Number, lat2: Number, lon2: Number) -> Num
     distance = A * (X + Delta_rho)
 
     return distance
+
+
+def get_tile_urls(
+    url: str, northwest: tuple[float, float], southeast: tuple[float, float], zoom: int
+) -> list[list[str]]:
+    """
+    Get tile URLs for the specified area.
+
+    Parameters
+    ----------
+    url : str
+        URL of the tile server. {z}/{x}/{y} should be included.
+    northwest : tuple[float, float]
+        Latitude and longitude of the northwest corner.
+    southeast : tuple[float, float]
+        Latitude and longitude of the southeast corner.
+    zoom : int
+        Zoom level.
+
+    Returns
+    -------
+    urls: list[list[str]]
+        URLs of the tiles.
+    """
+
+    x1, y1 = latlon2tile(northwest[0], northwest[1], zoom)
+    x2, y2 = latlon2tile(southeast[0], southeast[1], zoom)
+
+    urls = []
+    for y in range(int(y1), int(y2) + 1):
+        row = []
+        for x in range(int(x1), int(x2) + 1):
+            row.append(url.format(z=zoom, x=x, y=y))
+        urls.append(row)
+
+    return urls
+
+
+@overload
+def get_px_in_meter(lat: float, lon: float, zoom: int) -> tuple[float, float]:
+    """
+    Calculate the size of the maptile pixel size in meters along the x and y axes.
+
+    Parameters
+    ----------
+    lat : float
+        Latitude of the tile.
+    lon : float
+        Longitude of the tile.
+    zoom : int
+        Zoom level.
+
+    Returns
+    -------
+    px_w, px_h: tuple[float, float]
+        Size of the pixel in meters along the x and y axes.
+    """
+    ...
+
+
+@overload
+def get_px_in_meter(x: float, y: float, zoom: int) -> tuple[float, float]:
+    """
+    Calculate the size of the maptile pixel size in meters along the x and y axes.
+
+    Parameters
+    ----------
+    x : float
+        x-coordinate of the tile.
+    y : float
+        y-coordinate of the tile.
+    zoom : int
+        Zoom level.
+
+    Returns
+    -------
+    px_w, px_h: tuple[float, float]
+        Size of the pixel in meters along the x and y axes.
+    """
+    ...
+
+
+def get_px_in_meter(
+    lat: float = None,
+    lon: float = None,
+    x: float = None,
+    y: float = None,
+    zoom: int = None,
+) -> tuple[float, float]:
+
+    if x is None and y is None:
+        x, y = latlon2tile(lat, lon, zoom)
+    elif lat is None and lon is None:
+        lat, lon = tile2latlon(x, y, zoom)
+
+    lat2, lon2 = tile2latlon(
+        x + 1, y + 1, zoom
+    )  # get the lat. and lon. of the tile next to the given tile
+
+    px_w = calc_distance(lat, lon, lat, lon2) / 256
+    px_h = calc_distance(lat, lon, lat2, lon) / 256
+
+    return px_w, px_h
