@@ -39,7 +39,7 @@ def load_settings():
         for spec in __map_settings.specs:
             if spec.tileURL is None:
                 spec.tileURL = __map_settings.tileURL
-            if spec.tileURL is None:
+            if spec.dataAttribute is None:
                 spec.dataAttribute = __map_settings.dataAttribute
 
 
