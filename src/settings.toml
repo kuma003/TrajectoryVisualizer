@@ -16,7 +16,7 @@ tileURL = "https://cyberjapandata.gsi.go.jp/xyz/dem/{z}/{x}/{y}.txt"
 # name = "<name>"
 # northwest = [<latitude>, <longitude>] (northwest corner of the map)
 # southeast = [<latitude>, <longitude>] (southeast corner of the map)
-# zoom = <zoom level> (Detail level of the map(1 - 18, integer))
+# zoom = <zoom level> (Detail level of the map(1 - 14, integer))
 # dataAttribute = "<data attribute>" (Optional or inherit from main settings)
 # tileURL = "<tile URL>" (Optional or inherit from main settings)
 # 
@@ -27,8 +27,8 @@ southeast = [34.672182, 139.472122]
 zoom = 14
 [[map.specs]]
 name = "Noshiro Land"
-northwest = [40.238, 140.006]
-southeast = [40.202, 140.08]
+northwest = [40.160750290257795, 139.96924290399346]
+southeast = [40.11877471428155, 140.015]
 zoom = 14
 [[map.specs]]
 name = "Noshiro Sea"
