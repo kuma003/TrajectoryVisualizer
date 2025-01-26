@@ -9,6 +9,11 @@ import pyqtgraph.opengl as gl
 from pyqtgraph.opengl import GLViewWidget
 import requests
 from pyqtgraph.Qt import QtCore, QtGui
+from PyQt6.QtCore import pyqtSignal, QThread
+from geography import calc_distance, get_tile_urls, get_px_in_meter
+from settings import *
+
+from dataclasses import dataclass
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -17,7 +22,121 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QSplitter,
+    QLabel,
+    QComboBox,
+    QProgressDialog,
 )
+
+
+@dataclass
+class MapData:
+    X: np.ndarray
+    Y: np.ndarray
+    Z: np.ndarray
+    color: np.ndarray
+
+
+class MapDataThread(QThread):
+    signal_progress: pyqtSignal = pyqtSignal(int)
+    signal_message: pyqtSignal = pyqtSignal(str)
+
+    def __init__(self, map_viewer: GLViewWidget, map_name: str):
+        super().__init__()
+        self.map_viewer: GLViewWidget = map_viewer
+        self.spec: MapSpec = None
+        self.urls: list[list[str]] = [[]]
+        self.map = MapData([], [], [], [])
+        self.map_item: gl.GLSurfacePlotItem = None
+
+        self.terminate = False
+
+        self.__select_map(map_name)
+
+    def __select_map(self, map_name: str):
+        map_settings: MapSettings = get_map_settings()
+        # find the map spec
+        spec = [spec for spec in map_settings.specs if spec.name == map_name]
+        if len(spec) == 0:
+            return None
+        self.spec = spec[0]
+
+        self.urls = get_tile_urls(
+            map_settings.tileURL,
+            self.spec.northwest,
+            self.spec.southeast,
+            self.spec.zoom,
+        )
+
+    def __get_map_data(self):
+        # map data
+        map_arr = []
+        n = len(self.urls) * len(self.urls[0])
+        i = 0
+
+        for row in self.urls:
+            map_arr.append([])
+            for u in row:
+                i += 1
+                self.signal_progress.emit(int(i / n * 100.0))
+                self.signal_message.emit(f"Dowloading map data... {i}/{n}\nurl: {u}")
+                text = requests.get(u).text
+                try:
+                    map_arr[-1].append(
+                        np.loadtxt(
+                            text.replace("e", "-0.0").splitlines(), delimiter=","
+                        )
+                    )
+                except:
+                    map_arr[-1].append(np.zeros((256, 256)))
+                if n > 100:
+                    # prevent the server from being overloaded
+                    time.sleep(0.001)
+
+        self.map.Z = [np.hstack(sublist) for sublist in map_arr]
+        self.map.Z = np.vstack(self.map.Z)
+
+        # self.map.Z = self.map.Z[::5, ::5] # downsample
+        lat, lon = self.spec.northwest
+        px_w, px_h = get_px_in_meter(lat=lat, lon=lon, zoom=self.spec.zoom)
+
+        width = px_w * self.map.Z.shape[0]
+        height = px_h * self.map.Z.shape[1]
+
+        self.map.X = np.linspace(-width / 2, width / 2, self.map.Z.shape[0])
+        self.map.Y = np.linspace(-height / 2, height / 2, self.map.Z.shape[1])
+
+        # set the color of the map based on the elevation
+        self.map.color = np.empty(
+            (len(self.map.X), len(self.map.Y), 4), dtype=np.float32
+        )
+        max = np.max(self.map.Z)
+        self.map.color[..., 0] = 0.5
+        self.map.color[..., 1] = np.clip(self.map.Z / max * 0.4 + 0.6, 0, 1)
+        self.map.color[..., 2] = 0.5
+        self.map.color[..., 3] = 1
+        self.map.color[self.map.Z == 0, :] = [0, 0, 1, 1]  # sea color
+        # flatten the color array
+        self.map.color = self.map.color.reshape(len(self.map.X) * len(self.map.Y), 4)
+
+    def run(self):
+        self.terminate = False
+
+        self.__get_map_data()
+
+        self.map_viewer.clear()  # clear the current map data
+
+        self.map_item = gl.GLSurfacePlotItem(
+            x=self.map.X,
+            y=self.map.Y,
+            z=self.map.Z,
+            colors=self.map.color,
+            shader="shaded",
+            smooth=True,
+        )
+
+        self.map_viewer.addItem(self.map_item)
+
+        self.signal_progress.emit(100)
 
 
 class TrajectoryViwer(GLViewWidget):
@@ -25,57 +144,42 @@ class TrajectoryViwer(GLViewWidget):
         super().__init__()
         self.show()
         self.setCameraPosition(distance=1500)
-        urls = [
-            [
-                "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1625.txt",
-                "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1625.txt",
-            ],
-            [
-                "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1626.txt",
-                "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1626.txt",
-            ],
-        ]
 
-        map_arr = [
-            [
-                np.loadtxt(
-                    requests.get(u).text.replace("e", "-0.0").splitlines(),
-                    delimiter=",",
-                )
-                for u in row
-            ]
-            for row in urls
-        ]
-        self.Z = [np.hstack(sublist) for sublist in map_arr]
+        self.urls: list[list[str]] = [[]]
+        self.spec: MapSpec = None
+        self.map = MapData([], [], [], [])
+        self.map_item: gl.GLSurfacePlotItem = None
 
-        self.Z = np.vstack(self.Z)
+        self.vbl = QVBoxLayout()
+        self.setLayout(self.vbl)
+        self.pbar: QProgressDialog = None
+        self.mapDataThread: MapDataThread = None
 
-        self.Z = self.Z[::5, ::5]
-        self.X = (np.arange(self.Z.shape[0]) - self.Z.shape[0] / 2) * 10
-        self.Y = (np.arange(self.Z.shape[1]) - self.Z.shape[1] / 2) * 10
+    def set_button(self, button):
+        self.start_button = button
 
-    def set_map(self):
+    def set_map(self, map_name: str):
+        # disable the update button to prevent multiple downloads
+        self.start_button.setEnabled(False)
 
-        self.clear()
-        self.d
+        # start the thread to download the map data
+        self.mapDataThread = MapDataThread(self, map_name)
+        self.mapDataThread.signal_progress.connect(self.update_progress)
+        self.mapDataThread.signal_message.connect(self.update_prog_message)
+        # progress bar initialization
+        self.pbar = QProgressDialog("Downloading map data...", None, 0, 100, self)
+        self.vbl.addWidget(self.pbar)
+        self.pbar.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        self.mapDataThread.start()
 
-        color = np.empty((len(self.X), len(self.Y), 4), dtype=np.float32)
-        max = np.max(self.Z.flatten())
-        color[..., 0] = 0.5
-        color[..., 1] = np.clip(self.Z / max * 0.4 + 0.6, 0, 1)
-        color[..., 2] = 0.5
-        color[..., 3] = 1
-        color[self.Z == 0, :] = [0, 0, 1, 1]
-        # color[:, 3] = 1
-        map = gl.GLSurfacePlotItem(
-            x=self.X,
-            y=self.Y,
-            z=self.Z,
-            colors=color.reshape(len(self.X) * len(self.Y), 4),
-            shader="shaded",
-            smooth=True,
-        )
-        self.addItem(map)
+    def update_progress(self, value):
+        self.pbar.setValue(value)
+        if value == 100:
+            # self.pbar.close()
+            self.start_button.setEnabled(True)
+
+    def update_prog_message(self, message):
+        self.pbar.setLabelText(message)
 
 
 class MainWindow(QSplitter):
@@ -87,16 +191,33 @@ class MainWindow(QSplitter):
         self.initUI()
 
     def initUI(self):
-        self.p2 = TrajectoryViwer()
-        self.addWidget(self.p2)
+        # settings
+        map_settings = get_map_settings()
 
-        side_panel: QWidget = QWidget()
+        # viewer initialization
+        self.trajectory_viewer = TrajectoryViwer()
+        self.addWidget(self.trajectory_viewer)
+
+        # side panel settings
+        self.side_panel: QWidget = QWidget()
+        self.side_panel.setMaximumWidth(200)
+        self.addWidget(self.side_panel)
         layout = QVBoxLayout()
-        side_panel.setLayout(layout)
-        update_button = QPushButton("Update")
-        update_button.clicked.connect(lambda: self.p2.set_map())
-        layout.addWidget(update_button)
-        self.addWidget(side_panel)
+        self.side_panel.setLayout(layout)
+
+        # self.map_select = QLabel("Select Map")
+        # layout.addWidget(self.map_select)
+        self.map_combo = QComboBox()
+        layout.addWidget(self.map_combo)
+        for spec in map_settings.specs:
+            self.map_combo.addItem(spec.name)
+
+        self.update_button = QPushButton("Update")
+        layout.addWidget(self.update_button)
+        self.update_button.clicked.connect(
+            lambda: self.trajectory_viewer.set_map(self.map_combo.currentText())
+        )
+        self.trajectory_viewer.set_button(self.update_button)
 
 
 if __name__ == "__main__":
@@ -104,120 +225,3 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     exit(app.exec())
-
-
-# urls = [
-#     [
-#         "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1625.txt",
-#         "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1625.txt",
-#     ],
-#     [
-#         "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1626.txt",
-#         "http://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1626.txt",
-#     ],
-# ]
-
-# map_arr = [
-#     [
-#         np.loadtxt(
-#             requests.get(u).text.replace("e", "-0.0").splitlines(), delimiter=","
-#         )
-#         for u in row
-#     ]
-#     for row in urls
-# ]
-
-
-# Z = [np.hstack(sublist) for sublist in map_arr]
-
-# Z = np.vstack(Z)
-
-# # Z = Z[::5, ::5]
-
-# # X, Y = np.meshgrid(
-# #     (np.arange(Z.shape[0]) - Z.shape[0] / 2) * 30,
-# #     (np.arange(Z.shape[1]) - Z.shape[1] / 2) * 30,
-# # )
-# X = (np.arange(Z.shape[0]) - Z.shape[0] / 2) * 10
-# Y = (np.arange(Z.shape[1]) - Z.shape[1] / 2) * 10
-
-# # Z = Z.flatten()
-# # Create a GLViewWidget for 3D visualization
-# app = pg.mkQApp("3d Map")
-# view = gl.GLViewWidget()
-# view.show()
-# view.setWindowTitle("3D Scatter Plot")
-# view.setCameraPosition(distance=1500)
-# color = np.empty((len(X), len(Y), 4), dtype=np.float32)
-# max = np.max(Z.flatten())
-# color[..., 0] = 0.5
-# color[..., 1] = np.clip(Z / max * 0.4 + 0.6, 0, 1)
-# color[..., 2] = 0.5
-# color[..., 3] = 1
-# color[Z == 0, :] = [0, 0, 1, 1]
-# # color[:, 3] = 1
-
-# map = gl.GLSurfacePlotItem(
-#     x=X,
-#     y=Y,
-#     z=Z,
-#     colors=color.reshape(len(X) * len(Y), 4),
-#     shader="shaded",
-#     smooth=True,
-# )
-# # map.shader()["colorMap"] = np.array([0.2, 2, 0.5, 0.2, 1, 1, 0.2, 0, 2])
-# view.addItem(map)
-
-# color = np.empty((len(Z), 3), dtype=np.float32)
-# max = np.max(Z)
-# color[:, 0] = np.clip((1 + Z / max) / 2, 0, 1)
-# color[:, 1] = np.clip((1 + Z / max) / 6, 0, 1)
-# color[:, 2] = np.clip((1 + Z / max) / 6, 0, 1)
-# # color[:, 3] = 1
-
-# color[Z == 0] = [0, 0, 1]
-
-# Create scatter plot item
-# scatter = gl.GLScatterPlotItem(
-#     pos=np.c_[X.flatten(), Y.flatten(), Z],
-#     size=1,
-#     color=(1, 1, 1),
-#     pxMode=False,
-# )
-# # scatter.setGLOptions("translucent")
-# view.addItem(scatter)
-# scatter.setData(color=color)
-
-# # for x axis
-# for x, y, z in zip(X, Y, Z):
-#     pts = np.column_stack([x, y, z])
-#     color = np.empty((len(z), 4), dtype=np.float32)
-#     color[:, 0] = 0
-#     color[:, 1] = 1
-#     color[:, 2] = 0
-#     color[:, 3] = 1
-#     color[z == 0] = [0, 0, 1, 1]
-#     plt = gl.GLLinePlotItem(pos=pts, color=color, width=1, antialias=True)
-#     plt.setGLOptions("translucent")
-
-#     view.addItem(plt)
-
-# X = X.transpose()
-# Y = Y.transpose()
-# Z = Z.transpose()
-# # for y axis
-# for x, y, z in zip(X, Y, Z):
-#     pts = np.column_stack([x, y, z])
-#     color = np.empty((len(z), 4), dtype=np.float32)
-#     color[:, 0] = 0
-#     color[:, 1] = 1
-#     color[:, 2] = 0
-#     color[:, 3] = 1
-#     color[z == 0] = [0, 0, 1, 1]
-#     plt = gl.GLLinePlotItem(pos=pts, color=color, width=1, antialias=True)
-#     plt.setGLOptions("translucent")
-#     view.addItem(plt)
-
-# Start Qt event loop
-# if __name__ == "__main__":
-#     app.exec()
