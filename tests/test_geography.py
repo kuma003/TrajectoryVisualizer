@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from src.geography import tile2latlon, latlon2tile, calc_distance
+from src.geography import tile2latlon, latlon2tile, calc_distance, get_tile_urls
 
 
 @pytest.mark.parametrize(
@@ -35,6 +35,31 @@ def test_calc_distance(lat1, lon1, lat2, lon2, expected):
     assert np.isclose(
         calc_distance(lat1, lon1, lat2, lon2=lon2), expected, atol=2e-2
     )  # error must be less than 1 m
+
+
+@pytest.mark.parametrize(
+    "url, northwest, southeast, zoom, expected",
+    [
+        (
+            "https://cyberjapandata.gsi.go.jp/xyz/dem/{z}/{x}/{y}.txt",
+            (34.808917, 139.331932),
+            (34.672182, 139.472122),
+            12,
+            [
+                [
+                    "https://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1625.txt",
+                    "https://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1625.txt",
+                ],
+                [
+                    "https://cyberjapandata.gsi.go.jp/xyz/dem/12/3633/1626.txt",
+                    "https://cyberjapandata.gsi.go.jp/xyz/dem/12/3634/1626.txt",
+                ],
+            ],
+        )
+    ],
+)
+def test_get_tile_urls(url, northwest, southeast, zoom, expected):
+    assert get_tile_urls(url, northwest, southeast, zoom) == expected
 
 
 if __name__ == "__main__":
