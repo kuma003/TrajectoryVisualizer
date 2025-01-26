@@ -12,6 +12,7 @@ from pyqtgraph.Qt import QtCore, QtGui
 from PyQt6.QtCore import pyqtSignal, QThread
 from geography import calc_distance, get_tile_urls, get_px_in_meter
 from settings import *
+from stl import mesh
 
 from dataclasses import dataclass
 
@@ -30,6 +31,8 @@ from PyQt6.QtWidgets import (
 
 @dataclass
 class MapData:
+    """map data"""
+
     X: np.ndarray
     Y: np.ndarray
     Z: np.ndarray
@@ -37,6 +40,8 @@ class MapData:
 
 
 class MapDataThread(QThread):
+    """map data download and plot thread"""
+
     signal_progress: pyqtSignal = pyqtSignal(int)
     signal_message: pyqtSignal = pyqtSignal(str)
 
@@ -46,13 +51,15 @@ class MapDataThread(QThread):
         self.spec: MapSpec = None
         self.urls: list[list[str]] = [[]]
         self.map = MapData([], [], [], [])
-        self.map_item: gl.GLSurfacePlotItem = None
 
         self.terminate = False
+
+        self.map_item: gl.GLSurfacePlotItem = None
 
         self.__select_map(map_name)
 
     def __select_map(self, map_name: str):
+        """select the map and set its download urls"""
         map_settings: MapSettings = get_map_settings()
         # find the map spec
         spec = [spec for spec in map_settings.specs if spec.name == map_name]
@@ -68,17 +75,24 @@ class MapDataThread(QThread):
         )
 
     def __get_map_data(self):
-        # map data
+        """get the map data using the API"""
+
+        # download the map data
         map_arr = []
         n = len(self.urls) * len(self.urls[0])
-        i = 0
+        idx = 0  # counter
 
         for row in self.urls:
             map_arr.append([])
             for u in row:
-                i += 1
-                self.signal_progress.emit(int(i / n * 100.0))
-                self.signal_message.emit(f"Dowloading map data... {i}/{n}\nurl: {u}")
+                if self.terminate:
+                    return False  # terminate the thread
+                idx += 1
+
+                # send progress status
+                self.signal_progress.emit(int(idx / n * 100.0))
+                self.signal_message.emit(f"Dowloading map data... {idx}/{n}\nurl: {u}")
+
                 text = requests.get(u).text
                 try:
                     map_arr[-1].append(
@@ -87,6 +101,8 @@ class MapDataThread(QThread):
                         )
                     )
                 except:
+                    # if the region is sea, the data is not available
+                    # in this case, fill the array with zeros
                     map_arr[-1].append(np.zeros((256, 256)))
                 if n > 100:
                     # prevent the server from being overloaded
@@ -94,6 +110,9 @@ class MapDataThread(QThread):
 
         self.map.Z = [np.hstack(sublist) for sublist in map_arr]
         self.map.Z = np.vstack(self.map.Z)
+
+        if self.terminate:
+            return False  # terminate the thread
 
         # self.map.Z = self.map.Z[::5, ::5] # downsample
         lat, lon = self.spec.northwest
@@ -118,10 +137,13 @@ class MapDataThread(QThread):
         # flatten the color array
         self.map.color = self.map.color.reshape(len(self.map.X) * len(self.map.Y), 4)
 
+        return True
+
     def run(self):
         self.terminate = False
 
-        self.__get_map_data()
+        if not self.__get_map_data():  # download the map data
+            return
 
         self.map_viewer.clear()  # clear the current map data
 
@@ -136,8 +158,6 @@ class MapDataThread(QThread):
 
         self.map_viewer.addItem(self.map_item)
 
-        self.signal_progress.emit(100)
-
 
 class TrajectoryViwer(GLViewWidget):
     def __init__(self):
@@ -145,9 +165,6 @@ class TrajectoryViwer(GLViewWidget):
         self.show()
         self.setCameraPosition(distance=1500)
 
-        self.urls: list[list[str]] = [[]]
-        self.spec: MapSpec = None
-        self.map = MapData([], [], [], [])
         self.map_item: gl.GLSurfacePlotItem = None
 
         self.vbl = QVBoxLayout()
@@ -167,10 +184,12 @@ class TrajectoryViwer(GLViewWidget):
         self.mapDataThread.signal_progress.connect(self.update_progress)
         self.mapDataThread.signal_message.connect(self.update_prog_message)
         # progress bar initialization
-        self.pbar = QProgressDialog("Downloading map data...", None, 0, 100, self)
+        self.pbar = QProgressDialog("Downloading map data...", "cancel", 0, 100, self)
         self.vbl.addWidget(self.pbar)
         self.pbar.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
         self.mapDataThread.start()
+        self.mapDataThread.setTerminationEnabled(True)
+        self.pbar.canceled.connect(self.draw_map_termiante)
 
     def update_progress(self, value):
         self.pbar.setValue(value)
@@ -180,6 +199,10 @@ class TrajectoryViwer(GLViewWidget):
 
     def update_prog_message(self, message):
         self.pbar.setLabelText(message)
+
+    def draw_map_termiante(self):
+        self.mapDataThread.terminate = True
+        self.start_button.setEnabled(True)
 
 
 class MainWindow(QSplitter):
