@@ -1,6 +1,8 @@
-import pytest
 import numpy as np
-from src.geography import tile2latlon, latlon2tile, calc_distance, get_tile_urls
+import pytest
+
+from src.geography import (calc_distance, get_tile_urls, latlon2tile,
+                           tile2latlon)
 
 
 @pytest.mark.parametrize(
