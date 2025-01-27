@@ -1,9 +1,10 @@
 """settings.py - Read and validate settings."""
 
-from tomllib import load
-from pydantic import BaseModel, Field
-from typing import Optional
 from pathlib import Path
+from tomllib import load
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class MapSpec(BaseModel):
