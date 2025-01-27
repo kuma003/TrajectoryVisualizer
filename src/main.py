@@ -138,12 +138,12 @@ class TrajectoryViwer(GLViewWidget):
         self.vbl = QVBoxLayout()
         self.setLayout(self.vbl)
 
-        rocket_mesh = mesh.Mesh.from_file("src/rocket_model.stl")
-        verts = np.array(rocket_mesh.vectors, dtype=np.float32)
-        faces = np.arange(verts.shape[0] * 3, dtype=np.uint32).reshape(
-            verts.shape[0], 3
-        )
-        # self.model = gl.GLMeshItem(
+        # rocket_mesh = mesh.Mesh.from_file("src/rocket_model.stl")
+        # verts = np.array(rocket_mesh.vectors, dtype=np.float32)
+        # faces = np.arange(verts.shape[0] * 3, dtype=np.uint32).reshape(
+        #     verts.shape[0], 3
+        # )
+        # # self.model = gl.GLMeshItem(
         #     vertexes=verts.reshape(-1, 3),
         #     faces=faces,
         #     glOptions="opaque",
@@ -220,12 +220,6 @@ class TrajectoryViwer(GLViewWidget):
             smooth=True,
         )
         self.addItem(self.map_item)
-
-        self.paint_item = GLGraphicsItem.GLGraphicsItem()
-        self.addItem(self.paint_item)
-        painter = QtGui.QPainter(self.paint_item.view())
-        painter.drawText(0, 0, "Hello World")
-        painter.end()
 
 
 class MainWindow(QSplitter):
