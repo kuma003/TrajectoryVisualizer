@@ -3,21 +3,22 @@
 """
 
 import time
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from pyqtgraph.opengl import GLViewWidget, GLGraphicsItem
 import requests
+from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtWidgets import *
+from pyqtgraph.opengl import GLGraphicsItem, GLViewWidget
 from pyqtgraph.Qt import QtCore, QtGui
-from PyQt6.QtCore import pyqtSignal, QThread
-from geography import calc_distance, get_tile_urls, get_px_in_meter
-from settings import *
 from stl import mesh
 
-from dataclasses import dataclass
-
-from PyQt6.QtWidgets import *
-from PyQt6.QtGui import QPainter, QColor, QFont
+from geography import calc_distance, get_px_in_meter, get_tile_urls
+from settings import *
 
 
 class MapDataThread(QThread):
@@ -25,6 +26,8 @@ class MapDataThread(QThread):
 
     signal_progress: pyqtSignal = pyqtSignal(int)
     signal_message: pyqtSignal = pyqtSignal(str)
+
+    SAVE_PATH = Path("src/map_data")  # saving path
 
     def __init__(self, map_name: str):
         super().__init__()
@@ -42,6 +45,10 @@ class MapDataThread(QThread):
         self.map_item: gl.GLSurfacePlotItem = None
 
         self.__select_map(map_name)
+
+        if get_map_settings().saveTempData:
+            # create the directory if it does not exist
+            self.SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
     def __select_map(self, map_name: str):
         """select the map and set its download urls"""
@@ -79,16 +86,37 @@ class MapDataThread(QThread):
                 self.signal_message.emit(f"Dowloading map data... {idx}/{n}\nurl: {u}")
 
                 text = requests.get(u).text
+
+                if get_map_settings().saveTempData:
+                    z, x, y = u.removesuffix(".txt").split("/")[
+                        -3:
+                    ]  # get the tile index
+                    data_path = self.SAVE_PATH / f"{self.spec.name}_{z}_{x}_{y}.terrain"
+                    try:
+                        # check if the data is already downloaded
+                        with open(data_path) as f:
+                            text = f.read()
+                    except FileNotFoundError:
+                        # if the data is not downloaded, download it
+                        text = requests.get(u).text
+                        with open(
+                            data_path,
+                            "w",
+                        ) as f:
+                            f.write(text)
+                else:
+                    text = requests.get(u).text
+
                 try:
                     map_arr[-1].append(
                         np.loadtxt(
-                            text.replace("e", "-0.0").splitlines(), delimiter=","
+                            text.replace("e", "-inf").splitlines(), delimiter=","
                         )
                     )
                 except:
                     # if the region is sea, the data is not available
-                    # in this case, fill the array with zeros
-                    map_arr[-1].append(np.zeros((256, 256)))
+                    # in this case, fill the array with -inf(=sea level)
+                    map_arr[-1].append(np.full((256, 256), -np.inf))
                 if n > 100:
                     # prevent the server from being overloaded
                     time.sleep(0.001)
@@ -116,9 +144,10 @@ class MapDataThread(QThread):
         self.color[..., 1] = np.clip(self.Z / max * 0.4 + 0.6, 0, 1)
         self.color[..., 2] = 0.5
         self.color[..., 3] = 1
-        self.color[self.Z == 0, :] = [0, 0, 1, 1]  # sea color
+        self.color[self.Z == -np.inf, :] = [0, 0, 1, 1]  # sea color
         # flatten the color array
         self.color = self.color.reshape(len(self.X) * len(self.Y), 4)
+        self.Z[self.Z == -np.inf] = 0
 
     def run(self):
         self.terminate = False
@@ -268,7 +297,7 @@ class MainWindow(QSplitter):
 
         self.reload_conf_button = QPushButton("Reload Settings File")
         self.reload_conf_button.setIcon(QtGui.QIcon("src/icons/refresh.svg"))
-        # self.reload_conf_button.setFixedWidth(30)
+        self.reload_conf_button.clicked.connect(load_settings)
         map_button_layout.addWidget(self.reload_conf_button)
 
 
