@@ -24,12 +24,12 @@ tileURL = "https://cyberjapandata.gsi.go.jp/xyz/dem/{z}/{x}/{y}.txt"
 name = "Izu Ōshima"
 northwest = [34.808917, 139.331932]
 southeast = [34.672182, 139.472122]
-zoom = 14
+zoom = 13
 [[map.specs]]
 name = "Noshiro Land"
 northwest = [40.160750290257795, 139.96924290399346]
 southeast = [40.11877471428155, 140.015]
-zoom = 14
+zoom = 13
 [[map.specs]]
 name = "Noshiro Sea"
 northwest = [40.202, 140.006]
