@@ -2,8 +2,9 @@
     geography.py - Helper functions for geographic calculations.
 """
 
-import numpy as np
 from typing import Union, overload
+
+import numpy as np
 
 Number = Union[int, float, list, np.ndarray]
 
